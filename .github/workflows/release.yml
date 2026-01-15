@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Release
+      run: swift build -c release --arch arm64 --arch x86_64
+      
+    - name: Archive
+      run: |
+        cd .build/apple/Products/Release
+        tar -czf ../../../../winset.tar.gz winset
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: winset.tar.gz
+        draft: false
+        prerelease: false
+        generate_release_notes: true
