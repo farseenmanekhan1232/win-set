@@ -118,16 +118,13 @@ rm ~/.config/winset/config.toml
 
 ## Troubleshooting
 
-### App won't open / "Damaged" / "Malware" warning
+### App won't open / "Damaged" warning
 
-Since WinSet is an open-source tool and not signed with a paid Apple Developer ID, macOS may show a warning.
-
-**To fix:**
-1. **Right-click** (or Ctrl+Click) `WinSet.app` in Applications
-2. Select **Open** in the menu
-3. Click **Open** in the dialog box
-
-You only need to do this once.
+If you see a "Damage" warning, run:
+```bash
+xattr -cr /Applications/WinSet.app
+```
+(This should not be needed for signed releases)
 
 
 ### Windows not tiling
