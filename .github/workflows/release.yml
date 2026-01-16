@@ -10,14 +10,15 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "5.10"
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      
+      - name: Show Swift Version
+        run: swift --version
       
       - name: Build Release Binary
         run: |
@@ -45,6 +46,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Update Homebrew Tap
+        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -54,6 +56,8 @@ jobs:
           # Clone the tap repo
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/farseenmanekhan1232/homebrew-tap.git tap
           cd tap
+          
+          mkdir -p Formula
           
           # Create/update the formula
           cat > Formula/winset.rb << EOF
