@@ -165,6 +165,15 @@ jobs:
           
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          
+          # Remove old Formula if it exists (so brew prefers the Cask)
+          if [ -f "Formula/winset.rb" ]; then
+            git rm Formula/winset.rb
+            COMMIT_MSG="Update winset cask to v$VERSION (and remove old formula)"
+          else
+            COMMIT_MSG="Update winset cask to v$VERSION"
+          fi
+          
           git add Casks/winset.rb
-          git commit -m "Update winset cask to v$VERSION" || echo "No changes"
+          git commit -m "$COMMIT_MSG" || echo "No changes"
           git push
