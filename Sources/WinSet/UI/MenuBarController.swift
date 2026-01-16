@@ -16,6 +16,7 @@ class MenuBarController {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "WinSet")
             button.image?.isTemplate = true
+            button.title = "" // Ensure no text is displayed
         }
         
         setupMenu()
