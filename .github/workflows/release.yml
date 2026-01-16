@@ -45,6 +45,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.VERSION }}" "$APP_BUNDLE/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" "$APP_BUNDLE/Contents/Info.plist"
           
+          # Ad-hoc code sign (helps with some permission issues)
+          codesign --force --deep --sign - "$APP_BUNDLE"
+          
           # Create PkgInfo
           echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
       
