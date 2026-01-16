@@ -56,8 +56,8 @@ class TilingManager: WindowObserverDelegate {
                         continue
                     }
                     
-                    // Skip fullscreen or minimized windows
-                    guard !window.isFullscreen && !window.isMinimized else {
+                    // Skip fullscreen, minimized, or off-screen windows
+                    guard !window.isFullscreen, !window.isMinimized, window.frame.origin.x < 10000 else {
                         continue
                     }
                     
@@ -195,8 +195,8 @@ class TilingManager: WindowObserverDelegate {
                 if let winId = getWindowID(from: axWin) {
                     let frame = getFrame(from: axWin)
                     
-                    // Filter: Skip tiny windows (tooltips, menus, etc.)
-                    guard frame.width >= minWindowSize && frame.height >= minWindowSize else {
+                    // Filter: Skip tiny windows or off-screen windows
+                    guard frame.width >= minWindowSize && frame.height >= minWindowSize, frame.origin.x < 10000 else {
                         continue
                     }
                     
@@ -269,6 +269,38 @@ class TilingManager: WindowObserverDelegate {
                 // Handle window movement: check for monitor change OR position swap
                 if let winId = getWindowID(from: axWin) {
                     let frame = getFrame(from: axWin)
+                    
+                    // Case 1: Window moved OFF-SCREEN (Hidden by WorkspaceManager)
+                    if frame.origin.x >= 10000 {
+                        if let oldScreenId = windowScreens[winId] {
+                            print("Tiling: Window \(winId) moved off-screen (Hidden). Removing from layout.")
+                            getEngine(for: oldScreenId).removeWindow(winId)
+                            windowScreens.removeValue(forKey: winId)
+                            // We keep axCache/frameCache? Maybe, but strictly it's not "in tiling" anymore.
+                            // Removing from windowScreens effectively "untracks" it.
+                            needsLayout.insert(oldScreenId)
+                        }
+                        return
+                    }
+                    
+                    // Case 2: Window moved ON-SCREEN (Restored or New)
+                    // If we weren't tracking it (because it was hidden), treat as new add/restore
+                    if windowScreens[winId] == nil {
+                         let screenId = getScreenID(for: frame)
+                         print("Tiling: Window \(winId) returned on-screen. Adding to Screen \(screenId)")
+                         
+                         windowScreens[winId] = screenId
+                         axCache[winId] = axWin
+                         
+                         let engine = getEngine(for: screenId)
+                         engine.addWindow(winId)
+                         engine.focusWindow(winId) // Focus it since it likely just appeared
+                         
+                         needsLayout.insert(screenId)
+                         return
+                    }
+                    
+                    // Case 3: Normal on-screen movement (Swap or Monitor Change)
                     let newScreenId = getScreenID(for: frame)
                     
                     // Check if changed screen
