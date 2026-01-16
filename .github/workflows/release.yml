@@ -5,27 +5,91 @@ on:
     tags:
       - 'v*'
 
-jobs:
-  release:
-    runs-on: macos-latest
-    permissions:
-      contents: write
+permissions:
+  contents: write
 
+jobs:
+  build-and-release:
+    runs-on: macos-latest
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build Release
-      run: swift build -c release --arch arm64 --arch x86_64
+      - uses: actions/checkout@v4
       
-    - name: Archive
-      run: |
-        cd .build/apple/Products/Release
-        tar -czf ../../../../winset.tar.gz winset
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: winset.tar.gz
-        draft: false
-        prerelease: false
-        generate_release_notes: true
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "5.10"
+      
+      - name: Build Release Binary
+        run: |
+          swift build -c release
+          mkdir -p dist
+          cp .build/release/winset dist/
+          cd dist && zip -r winset-macos.zip winset
+      
+      - name: Get Version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          SHA=$(shasum -a 256 dist/winset-macos.zip | cut -d ' ' -f 1)
+          echo "SHA256=$SHA" >> $GITHUB_OUTPUT
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/winset-macos.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Update Homebrew Tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          SHA256=${{ steps.sha.outputs.SHA256 }}
+          
+          # Clone the tap repo
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/farseenmanekhan1232/homebrew-tap.git tap
+          cd tap
+          
+          # Create/update the formula
+          cat > Formula/winset.rb << EOF
+          class Winset < Formula
+            desc "Vim-inspired window manager for macOS with auto-tiling"
+            homepage "https://github.com/farseenmanekhan1232/win-set"
+            url "https://github.com/farseenmanekhan1232/win-set/releases/download/${VERSION}/winset-macos.zip"
+            sha256 "${SHA256}"
+            version "${VERSION#v}"
+          
+            def install
+              bin.install "winset"
+            end
+          
+            service do
+              run [opt_bin/"winset"]
+              keep_alive true
+              log_path var/"log/winset.log"
+              error_log_path var/"log/winset.log"
+            end
+          
+            def caveats
+              <<~EOS
+                To start winset:
+                  brew services start winset
+          
+                Make sure to grant Accessibility permissions in:
+                  System Settings → Privacy & Security → Accessibility
+              EOS
+            end
+          end
+          EOF
+          
+          # Commit and push
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/winset.rb
+          git commit -m "Update winset to ${VERSION}" || echo "No changes"
+          git push

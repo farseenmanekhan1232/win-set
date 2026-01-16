@@ -1,7 +1,18 @@
+# Build artifacts
 .build/
 .swiftpm/
+DerivedData/
+
+# macOS
+.DS_Store
 *.xcodeproj
 *.xcworkspace
-build/
-.DS_Store
-DerivedData/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Release artifacts
+*.zip
+*.tar.gz
