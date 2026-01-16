@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-15
+    runs-on: macos-13  # Intel-based runner for broader compatibility
     steps:
       - uses: actions/checkout@v4
       
@@ -20,12 +20,16 @@ jobs:
       - name: Show Swift Version
         run: swift --version
       
-      - name: Build Release Binary
+      - name: Build Universal Binary
         run: |
-          swift build -c release
+          # Build for both architectures
+          swift build -c release --arch arm64 --arch x86_64
           mkdir -p dist
-          cp .build/release/winset dist/
+          cp .build/apple/Products/Release/winset dist/
           cd dist && zip -r winset-macos.zip winset
+      
+      - name: Verify Universal Binary
+        run: file dist/winset
       
       - name: Get Version
         id: version
