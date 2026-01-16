@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 
 /// Status bar controller for the menu bar icon
 class StatusBarController {
@@ -67,6 +68,12 @@ class StatusBarController {
         let menu = NSMenu()
         
         menu.addItem(NSMenuItem(title: "WinSet", action: nil, keyEquivalent: ""))
+        
+        // Enabled toggle placeholder (mirrors old controller)
+        // let enabledItem = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
+        // enabledItem.target = self
+        // menu.addItem(enabledItem)
+
         menu.addItem(NSMenuItem.separator())
         
         let modeItem = NSMenuItem(title: "Mode: Disabled", action: nil, keyEquivalent: "")
@@ -75,8 +82,21 @@ class StatusBarController {
         
         menu.addItem(NSMenuItem.separator())
         
+        // Start at Login
+        let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
+        loginItem.target = self
+        loginItem.state = isLoginItemEnabled() ? .on : .off
+        menu.addItem(loginItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
         menu.addItem(NSMenuItem(title: "Keybindings", action: nil, keyEquivalent: ""))
         menu.addItem(createKeybindingsSubmenu())
+        
+        // About
+        let aboutItem = NSMenuItem(title: "About WinSet", action: #selector(showAbout), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -115,6 +135,37 @@ class StatusBarController {
     
 
     
+    @objc private func toggleLoginItem() {
+        let service = SMAppService.mainApp
+        
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+                print("Removed from Login Items")
+            } else {
+                try service.register()
+                print("Added to Login Items")
+            }
+        } catch {
+            print("Failed to toggle login item: \(error)")
+        }
+        
+        // Update menu checkmark
+        if let menu = statusItem?.menu {
+            for item in menu.items where item.title == "Start at Login" {
+                item.state = isLoginItemEnabled() ? .on : .off
+            }
+        }
+    }
+    
+    private func isLoginItemEnabled() -> Bool {
+        return SMAppService.mainApp.status == .enabled
+    }
+    
+    @objc private func showAbout() {
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
     }
