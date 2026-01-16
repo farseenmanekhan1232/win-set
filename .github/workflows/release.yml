@@ -46,27 +46,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Update Homebrew Tap
-        if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+        if: env.HOMEBREW_TAP_TOKEN != ''
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
           SHA256=${{ steps.sha.outputs.SHA256 }}
           
-          # Clone the tap repo
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/farseenmanekhan1232/homebrew-tap.git tap
           cd tap
           
           mkdir -p Formula
           
-          # Create/update the formula
-          cat > Formula/winset.rb << EOF
+          cat > Formula/winset.rb << 'FORMULA'
           class Winset < Formula
             desc "Vim-inspired window manager for macOS with auto-tiling"
             homepage "https://github.com/farseenmanekhan1232/win-set"
-            url "https://github.com/farseenmanekhan1232/win-set/releases/download/${VERSION}/winset-macos.zip"
-            sha256 "${SHA256}"
-            version "${VERSION#v}"
+            url "https://github.com/farseenmanekhan1232/win-set/releases/download/VERSION_PLACEHOLDER/winset-macos.zip"
+            sha256 "SHA_PLACEHOLDER"
+            version "VERSION_NUM_PLACEHOLDER"
           
             def install
               bin.install "winset"
@@ -83,15 +81,19 @@ jobs:
               <<~EOS
                 To start winset:
                   brew services start winset
-          
+
                 Make sure to grant Accessibility permissions in:
                   System Settings → Privacy & Security → Accessibility
               EOS
             end
           end
-          EOF
+          FORMULA
           
-          # Commit and push
+          # Replace placeholders
+          sed -i '' "s|VERSION_PLACEHOLDER|${VERSION}|g" Formula/winset.rb
+          sed -i '' "s|SHA_PLACEHOLDER|${SHA256}|g" Formula/winset.rb
+          sed -i '' "s|VERSION_NUM_PLACEHOLDER|${VERSION#v}|g" Formula/winset.rb
+          
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add Formula/winset.rb
