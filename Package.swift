@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "winset", targets: ["WinSet"])
+        .executable(name: "WinSet", targets: ["WinSet"])
     ],
     dependencies: [
         // TOML config parsing
@@ -17,7 +17,10 @@ let package = Package(
         .executableTarget(
             name: "WinSet",
             dependencies: ["TOMLKit"],
-            path: "Sources/WinSet"
+            path: "Sources/WinSet",
+            resources: [
+                .copy("../../Resources/Info.plist")
+            ]
         )
     ]
 )

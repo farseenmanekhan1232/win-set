@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-latest  # ARM runner, cross-compiles to universal
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       
@@ -20,88 +20,114 @@ jobs:
       - name: Show Swift Version
         run: swift --version
       
-      - name: Build Universal Binary
-        run: |
-          # Build for both architectures (creates universal binary)
-          swift build -c release --arch arm64 --arch x86_64
-          mkdir -p dist
-          cp .build/apple/Products/Release/winset dist/
-          cd dist && zip -r winset-macos.zip winset
-      
-      - name: Verify Universal Binary
-        run: |
-          file dist/winset
-          lipo -info dist/winset
-      
       - name: Get Version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Build Universal App Bundle
+        run: |
+          # Build for both architectures
+          swift build -c release --arch arm64 --arch x86_64
+          
+          # Create app bundle structure
+          APP_BUNDLE="dist/WinSet.app"
+          mkdir -p "$APP_BUNDLE/Contents/MacOS"
+          mkdir -p "$APP_BUNDLE/Contents/Resources"
+          
+          # Copy binary
+          cp .build/apple/Products/Release/WinSet "$APP_BUNDLE/Contents/MacOS/"
+          
+          # Copy and update Info.plist
+          cp Resources/Info.plist "$APP_BUNDLE/Contents/"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.VERSION }}" "$APP_BUNDLE/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.version.outputs.VERSION }}" "$APP_BUNDLE/Contents/Info.plist"
+          
+          # Create PkgInfo
+          echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
+      
+      - name: Verify App Bundle
+        run: |
+          echo "📋 Bundle contents:"
+          ls -la dist/WinSet.app/Contents/
+          echo ""
+          echo "🔍 Binary architecture:"
+          file dist/WinSet.app/Contents/MacOS/WinSet
+      
+      - name: Create ZIP
+        run: |
+          cd dist
+          zip -r "WinSet-${{ steps.version.outputs.VERSION }}.zip" WinSet.app
       
       - name: Calculate SHA256
         id: sha
         run: |
-          SHA=$(shasum -a 256 dist/winset-macos.zip | cut -d ' ' -f 1)
+          SHA=$(shasum -a 256 dist/WinSet-${{ steps.version.outputs.VERSION }}.zip | cut -d ' ' -f 1)
           echo "SHA256=$SHA" >> $GITHUB_OUTPUT
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/winset-macos.zip
+          files: dist/WinSet-${{ steps.version.outputs.VERSION }}.zip
+          body: |
+            ## WinSet ${{ steps.version.outputs.TAG }}
+            
+            ### Installation
+            1. Download `WinSet-${{ steps.version.outputs.VERSION }}.zip`
+            2. Unzip and drag **WinSet.app** to `/Applications`
+            3. Double-click to run
+            4. Grant Accessibility permission when prompted
+            5. Click the menu bar icon → "Start at Login"
+            
+            ### SHA256
+            ```
+            ${{ steps.sha.outputs.SHA256 }}
+            ```
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Update Homebrew Tap
+      - name: Update Homebrew Tap (Cask)
         if: env.HOMEBREW_TAP_TOKEN != ''
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
+          TAG=${{ steps.version.outputs.TAG }}
           SHA256=${{ steps.sha.outputs.SHA256 }}
           
           git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/farseenmanekhan1232/homebrew-tap.git tap
           cd tap
           
-          mkdir -p Formula
+          mkdir -p Casks
           
-          cat > Formula/winset.rb << 'FORMULA'
-          class Winset < Formula
+          cat > Casks/winset.rb << EOF
+          cask "winset" do
+            version "$VERSION"
+            sha256 "$SHA256"
+            
+            url "https://github.com/farseenmanekhan1232/win-set/releases/download/v#{version}/WinSet-#{version}.zip"
+            name "WinSet"
             desc "Vim-inspired window manager for macOS with auto-tiling"
             homepage "https://github.com/farseenmanekhan1232/win-set"
-            url "https://github.com/farseenmanekhan1232/win-set/releases/download/VERSION_PLACEHOLDER/winset-macos.zip"
-            sha256 "SHA_PLACEHOLDER"
-            version "VERSION_NUM_PLACEHOLDER"
-          
-            def install
-              bin.install "winset"
+            
+            app "WinSet.app"
+            
+            postflight do
+              system_command "/usr/bin/defaults", args: ["write", "com.winset.app", "SUAutomaticallyUpdate", "-bool", "true"]
             end
-          
-            service do
-              run [opt_bin/"winset"]
-              keep_alive true
-              log_path var/"log/winset.log"
-              error_log_path var/"log/winset.log"
-            end
-          
-            def caveats
-              <<~EOS
-                To start winset:
-                  brew services start winset
-
-                Make sure to grant Accessibility permissions in:
-                  System Settings → Privacy & Security → Accessibility
-              EOS
-            end
+            
+            zap trash: [
+              "~/.config/winset",
+              "~/Library/Preferences/com.winset.app.plist",
+            ]
           end
-          FORMULA
-          
-          # Replace placeholders
-          sed -i '' "s|VERSION_PLACEHOLDER|${VERSION}|g" Formula/winset.rb
-          sed -i '' "s|SHA_PLACEHOLDER|${SHA256}|g" Formula/winset.rb
-          sed -i '' "s|VERSION_NUM_PLACEHOLDER|${VERSION#v}|g" Formula/winset.rb
+          EOF
           
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add Formula/winset.rb
-          git commit -m "Update winset to ${VERSION}" || echo "No changes"
+          git add Casks/winset.rb
+          git commit -m "Update winset cask to v$VERSION" || echo "No changes"
           git push

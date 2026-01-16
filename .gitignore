@@ -16,3 +16,4 @@ DerivedData/
 # Release artifacts
 *.zip
 *.tar.gz
+dist/

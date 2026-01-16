@@ -3,7 +3,7 @@
 **Vim-inspired window manager for macOS with Hyprland-style auto-tiling**
 
 [![CI](https://github.com/farseenmanekhan1232/win-set/actions/workflows/ci.yml/badge.svg)](https://github.com/farseenmanekhan1232/win-set/actions/workflows/ci.yml)
-[![Release](https://github.com/farseenmanekhan1232/win-set/releases/latest/badge.svg)](https://github.com/farseenmanekhan1232/win-set/releases/latest)
+[![Release](https://img.shields.io/github/v/release/farseenmanekhan1232/win-set)](https://github.com/farseenmanekhan1232/win-set/releases/latest)
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-13%2B-blue" alt="macOS 13+">
@@ -17,58 +17,47 @@
 - ⌨️ **Vim-style navigation** - Use `h/j/k/l` to focus windows
 - 🔄 **Smart swap/resize** - Swap windows or cycle through 50%/66%/33% widths
 - 🖥️ **Multi-monitor** - Full support for multiple displays
+- 🎯 **Menu bar app** - Lives in your menu bar, starts at login
 - ⚡ **Lightweight** - Native Swift, minimal resource usage
 
 ---
 
 ## Installation
 
-### Via Homebrew (Recommended)
+### Option 1: Download App (Recommended)
+
+1. **Download** the latest release from [GitHub Releases](https://github.com/farseenmanekhan1232/win-set/releases/latest)
+2. **Unzip** and drag **WinSet.app** to `/Applications`
+3. **Open** WinSet from Applications
+4. **Grant Permission** when prompted (see [Setup](#setup))
+
+### Option 2: Homebrew Cask
 
 ```bash
 brew tap farseenmanekhan1232/tap
-brew install winset
+brew install --cask winset
 ```
-
-### Manual Download
-
-Download the latest release from [GitHub Releases](https://github.com/farseenmanekhan1232/win-set/releases/latest).
 
 ---
 
 ## Setup
 
-### 1. Grant Accessibility Permission
+### Grant Accessibility Permission
 
-WinSet needs Accessibility access to manage windows:
+When you first open WinSet, macOS will prompt you to grant Accessibility access:
 
-1. Open **System Settings** → **Privacy & Security** → **Accessibility**
-2. Click the **+** button
-3. Add `/usr/local/bin/winset` (or drag from Finder)
-4. Enable the checkbox
+1. Click **"Open System Settings"** in the prompt
+2. Enable **WinSet** in the list
+3. Restart WinSet if needed
 
-### 2. Grant Input Monitoring Permission
+> **Note:** This permission is required for WinSet to move and resize windows.
 
-For global hotkeys:
+### Start at Login
 
-1. Open **System Settings** → **Privacy & Security** → **Input Monitoring**
-2. Add `winset` if prompted
+1. Click the **WinSet icon** in your menu bar (⊞)
+2. Select **"Start at Login"**
 
-### 3. Start WinSet
-
-#### Option A: Run on Login (Recommended)
-
-```bash
-brew services start winset
-```
-
-This starts WinSet now and automatically on every login.
-
-#### Option B: Run Manually
-
-```bash
-winset
-```
+That's it! WinSet will now start automatically when you log in.
 
 ---
 
@@ -99,7 +88,7 @@ When you press `Shift + Direction`:
 
 ## Configuration
 
-Config file: `~/.config/winset/config.toml`
+Config file location: `~/.config/winset/config.toml`
 
 ```toml
 # Gap between windows (pixels)
@@ -120,7 +109,7 @@ maxWindowsPerScreen = 2
 "shift-l" = "swap right"
 ```
 
-Delete the config to regenerate defaults:
+To reset to defaults:
 ```bash
 rm ~/.config/winset/config.toml
 ```
@@ -129,44 +118,36 @@ rm ~/.config/winset/config.toml
 
 ## Troubleshooting
 
-### "bad CPU type in executable"
+### App won't open / "Damaged" warning
 
-You have an older version. Update:
+This happens because the app isn't code-signed. Run:
 ```bash
-brew upgrade winset
+xattr -cr /Applications/WinSet.app
 ```
 
 ### Windows not tiling
 
-1. Check Accessibility permission is granted
-2. Restart WinSet: `brew services restart winset`
+1. Check Accessibility permission in **System Settings → Privacy & Security → Accessibility**
+2. Make sure WinSet is running (check menu bar)
 
 ### Hotkeys not working
 
-1. Check Input Monitoring permission
-2. Make sure WinSet is running: `pgrep winset`
-
-### View logs
-
-```bash
-tail -f /usr/local/var/log/winset.log
-```
+1. Grant **Input Monitoring** permission if prompted
+2. Make sure no other app is using the same hotkeys
 
 ---
 
 ## Uninstall
 
-```bash
-brew services stop winset
-brew uninstall winset
-brew untap farseenmanekhan1232/tap
-```
+1. Click menu bar icon → **Quit WinSet**
+2. Drag **WinSet.app** from Applications to Trash
+3. Optionally remove config: `rm -rf ~/.config/winset`
 
 ---
 
 ## Contributing
 
-PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+PRs welcome! See the codebase for contribution guidelines.
 
 ## License
 
