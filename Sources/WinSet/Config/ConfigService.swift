@@ -39,50 +39,41 @@ class ConfigService {
         
         let defaultConfig = """
         # WinSet Configuration
-        
-        # Strategy: "hold" (default) or "toggle" (old style)
-        activationStrategy = "hold"
-        
-        # Modifier to hold for "hold" strategy (ctrl, alt, cmd, shift, fn)
+
+        # Modifier to hold for hotkeys (ctrl, alt, cmd, shift)
         activationModifier = "ctrl"
-        
-        # Legacy: for "toggle" strategy
-        activationKey = "ctrl-space"
-        
+
         # Gap between windows (pixels)
         gaps = 10.0
-        
+
+        # Use equal 50/50 split for 2 windows (false = golden ratio ~62/38)
+        useEqualSplitForTwo = true
+
+        # Enable auto-tiling: true = windows snap back after resize
+        # false = manual resize is preserved, other windows adjust
+        enableAutoTiling = true
+
         [bindings.normal]
+        # Focus navigation (Ctrl + h/j/k/l)
         h = "focus left"
         j = "focus down"
         k = "focus up"
         l = "focus right"
-        
-        "shift-h" = "move left"
-        "shift-j" = "move bottom"
-        "shift-k" = "move top"
-        "shift-l" = "move right"
-        
+
+        # Swap or resize at edge (Ctrl + Shift + h/j/k/l)
+        # Tries to swap windows; if no window in that direction, snaps to half
+        "shift-h" = "swap left"
+        "shift-j" = "swap down"
+        "shift-k" = "swap up"
+        "shift-l" = "swap right"
+
+        # Monitor navigation
         "bracketleft" = "focus monitor left"
         "bracketright" = "focus monitor right"
-        
+
+        # Window sizing
         f = "center"
         "shift-f" = "maximize"
-        
-        # Workspaces
-        "1" = "workspace 1"
-        "2" = "workspace 2"
-        "3" = "workspace 3"
-        "4" = "workspace 4"
-        
-        "shift-1" = "move to workspace 1"
-        "shift-2" = "move to workspace 2"
-        "shift-3" = "move to workspace 3"
-        "shift-4" = "move to workspace 4"
-        
-        i = "insert-mode"
-        ":" = "command-mode"
-        esc = "disabled-mode" 
         """
         
         try defaultConfig.write(to: configPath, atomically: true, encoding: .utf8)

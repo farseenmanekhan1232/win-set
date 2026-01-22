@@ -1,369 +1,368 @@
 import Foundation
 
-/// A node in the Binary Space Partitioning tree
-enum BSPNode: Codable {
-    case split(Split)
-    case window(WindowID)
-    
-    struct Split: Codable {
-        let type: SplitType
-        var ratio: CGFloat // 0.0 to 1.0 (typically 0.5)
-        var child1: Box<BSPNode>
-        var child2: Box<BSPNode>
-    }
-    
-    enum SplitType: String, Codable {
-        case horizontal // Split vertically (left/right) - confusing name convention, often called vertical split in some WMs
-        case vertical   // Split horizontally (top/bottom)
-        
-        // Let's clarify:
-        // Horizontal Split = Two windows side-by-side [ | ]
-        // Vertical Split = Two windows top-bottom [ - ]
-    }
-}
-
-// Helper to allow recursive structs in Swift enums
-class Box<T: Codable>: Codable {
-    var value: T
-    init(_ value: T) { self.value = value }
-}
-
-/// Pure logic engine for calculating window frames based on BSP tree
+/// Smart layout engine that switches between:
+/// - Equal split or golden ratio for 2 windows (configurable)
+/// - Golden ratio master/stack for 3 windows
+/// - Grid layout for 4+ windows
+/// Supports dynamic resizing by user
 class LayoutEngine {
-    
-    private(set) var root: BSPNode?
-    
+
+    // Golden ratio ≈ 0.618
+    private static let goldenRatio: CGFloat = 0.618
+
     // Config
     var gaps: CGFloat = 10.0
-    
-    // State
-    // Track all window IDs in this engine for O(1) lookup
-    private(set) var windowIds: Set<WindowID> = []
-    
-    // We also need to know the "Last Focused" node to determine where to split.
-    var lastFocusedWindowId: WindowID?
-    
+
+    // Current master/stack split ratio (can be adjusted by user)
+    private(set) var masterRatio: CGFloat = goldenRatio
+
+    // Ordered list of window IDs (first = master in master/stack mode)
+    private(set) var windowIds: [WindowID] = []
+
     init() {}
-    
-    // MARK: - Operations
-    
-    /// Check if a window is tracked by this engine
+
+    // MARK: - Window Management
+
+    /// Add a window to the layout
+    func addWindow(_ windowId: WindowID) {
+        guard !windowIds.contains(windowId) else { return }
+        windowIds.append(windowId)
+    }
+
+    /// Remove a window from the layout
+    func removeWindow(_ windowId: WindowID) {
+        windowIds.removeAll { $0 == windowId }
+    }
+
+    /// Check if a window is in this layout
     func containsWindow(_ windowId: WindowID) -> Bool {
         return windowIds.contains(windowId)
     }
-    
-    /// Add a new window to the tree (idempotent - skips if already exists)
-    func addWindow(_ windowId: WindowID) {
-        // Idempotency check
-        guard !windowIds.contains(windowId) else {
-            print("LayoutEngine: Window \(windowId) already in tree, skipping add")
-            return
-        }
-        
-        windowIds.insert(windowId)
-        
-        guard let root = root else {
-            // First window becomes root
-            self.root = .window(windowId)
-            return
-        }
-        
-        // If we have a focus expectation AND that window exists in our tree, insert relative to it.
-        // Otherwise, find a leaf.
-        
-        if let focusedId = lastFocusedWindowId, windowIds.contains(focusedId) {
-            self.root = insert(windowId, relativeTo: focusedId, in: root)
-        } else {
-            // No valid focus, just split the first leaf we find
-            self.root = insertAtAnyLeaf(windowId, in: root)
-        }
-    }
-    
-    /// Remove a window from the tree
-    func removeWindow(_ windowId: WindowID) {
-        guard windowIds.contains(windowId) else {
-            return
-        }
-        
-        windowIds.remove(windowId)
-        
-        // Update lastFocusedWindowId if we're removing it
-        if lastFocusedWindowId == windowId {
-            lastFocusedWindowId = windowIds.first
-        }
-        
-        guard let root = root else { return }
-        
-        if case .window(let id) = root, id == windowId {
-            self.root = nil
-            return
-        }
-        
-        self.root = remove(windowId, from: root)
-    }
-    
-    /// Swap two windows in the tree
+
+    /// Swap two windows in the layout order
     func swapWindows(_ id1: WindowID, _ id2: WindowID) {
-        guard windowIds.contains(id1), windowIds.contains(id2) else {
+        guard let idx1 = windowIds.firstIndex(of: id1),
+              let idx2 = windowIds.firstIndex(of: id2) else { return }
+        windowIds.swapAt(idx1, idx2)
+    }
+
+    /// Reorder windows to a new sequence
+    func reorderWindows(_ newOrder: [WindowID]) {
+        // Validate all window IDs exist
+        let validIds = Set(windowIds)
+        guard newOrder.count == windowIds.count,
+              newOrder.allSatisfy({ validIds.contains($0) }) else {
+            print("Invalid window order - must contain exactly the same window IDs")
             return
         }
-        guard let root = root else { return }
-        
-        // Use a placeholder to perform the swap
-        let placeholder: WindowID = UInt32.max
-        self.root = replaceWindow(id1, with: placeholder, in: root)
-        self.root = replaceWindow(id2, with: id1, in: self.root!)
-        self.root = replaceWindow(placeholder, with: id2, in: self.root!)
-        
-        print("LayoutEngine: Swapped windows \(id1) <-> \(id2)")
+        windowIds = newOrder
     }
-    
-    private func replaceWindow(_ targetId: WindowID, with newId: WindowID, in node: BSPNode) -> BSPNode {
-        switch node {
-        case .window(let id):
-            return id == targetId ? .window(newId) : node
-        case .split(let split):
-            var newSplit = split
-            newSplit.child1 = Box(replaceWindow(targetId, with: newId, in: split.child1.value))
-            newSplit.child2 = Box(replaceWindow(targetId, with: newId, in: split.child2.value))
-            return .split(newSplit)
-        }
+
+    /// Move a window to master position (first in list)
+    func promoteToMaster(_ windowId: WindowID) {
+        guard let idx = windowIds.firstIndex(of: windowId), idx > 0 else { return }
+        windowIds.remove(at: idx)
+        windowIds.insert(windowId, at: 0)
     }
-    
-    /// Update the split ratio for the container of a window
-    /// newRatio: The desired ratio for child1 (the left/top window)
-    func updateSplitRatio(for windowId: WindowID, newRatio: CGFloat) {
-        guard windowIds.contains(windowId), let root = root else { return }
-        
-        // Find the split that contains this window and update its ratio
-        self.root = updateSplitRatioRecursive(windowId, newRatio: newRatio, in: root)
-        print("LayoutEngine: Updated split ratio for \(windowId) to \(newRatio)")
+
+    /// Focus callback (for future use)
+    func focusWindow(_ windowId: WindowID) {
+        // Could be used for visual highlighting
     }
-    
-    private func updateSplitRatioRecursive(_ targetId: WindowID, newRatio: CGFloat, in node: BSPNode) -> BSPNode {
-        switch node {
-        case .window:
-            return node  // Not a split, return as-is
-            
-        case .split(let split):
-            // Check if this split directly contains our target window
-            let child1ContainsTarget = containsWindowInNode(targetId, in: split.child1.value)
-            let child2ContainsTarget = containsWindowInNode(targetId, in: split.child2.value)
-            
-            if child1ContainsTarget && !child2ContainsTarget {
-                // Target is in child1 - this is the split we want to modify
-                // If target is child1, use newRatio directly
-                if case .window(let id) = split.child1.value, id == targetId {
-                    var newSplit = split
-                    newSplit.ratio = newRatio
-                    return .split(newSplit)
-                }
-                // Target is deeper in child1, recurse
-                var newSplit = split
-                newSplit.child1 = Box(updateSplitRatioRecursive(targetId, newRatio: newRatio, in: split.child1.value))
-                return .split(newSplit)
-                
-            } else if child2ContainsTarget && !child1ContainsTarget {
-                // Target is in child2 - update ratio (inverted since it's child2)
-                if case .window(let id) = split.child2.value, id == targetId {
-                    var newSplit = split
-                    newSplit.ratio = 1.0 - newRatio  // Invert for child2
-                    return .split(newSplit)
-                }
-                // Target is deeper in child2, recurse
-                var newSplit = split
-                newSplit.child2 = Box(updateSplitRatioRecursive(targetId, newRatio: newRatio, in: split.child2.value))
-                return .split(newSplit)
+
+    /// Prune windows not in the valid set
+    func prune(keeping validIds: Set<WindowID>) {
+        windowIds.removeAll { !validIds.contains($0) }
+    }
+
+    // MARK: - Ratio Adjustment
+
+    /// Update master ratio based on user resizing (only applies in master/stack mode)
+    func updateRatioFromResize(windowId: WindowID, newFrame: CGRect, screenFrame: CGRect) -> Bool {
+        // Only adjust ratio in master/stack mode (2-3 windows)
+        guard windowIds.count >= 2 && windowIds.count <= 3 else { return false }
+
+        let isMaster = windowIds.first == windowId
+
+        if isMaster {
+            let usableWidth = screenFrame.width - (gaps * 3)
+            let masterWidth = newFrame.width
+            let newRatio = (masterWidth / usableWidth).clamped(to: 0.3...0.8)
+
+            if abs(newRatio - masterRatio) > 0.02 {
+                masterRatio = newRatio
+                return true
             }
-            
-            // Neither or both contain target - just return as-is (shouldn't happen)
-            return node
         }
+
+        return false
     }
-    
-    private func containsWindowInNode(_ windowId: WindowID, in node: BSPNode) -> Bool {
-        switch node {
-        case .window(let id):
-            return id == windowId
-        case .split(let split):
-            return containsWindowInNode(windowId, in: split.child1.value) ||
-                   containsWindowInNode(windowId, in: split.child2.value)
-        }
+
+    /// Reset to golden ratio
+    func resetRatio() {
+        masterRatio = Self.goldenRatio
     }
-    
-    /// Calculate frames for all windows in the tree given a screen rect
+
+    /// Set ratio to 0.5 for equal split
+    func setEqualSplit() {
+        masterRatio = 0.5
+    }
+
+    // MARK: - Frame Calculation
+
+    /// Calculate frames for all windows - automatically picks best layout
     func calculateFrames(for screenFrame: CGRect) -> [WindowID: CGRect] {
-        var frames: [WindowID: CGRect] = [:]
-        guard let root = root else { return frames }
-        
-        // Apply outer gaps
-        let paddedFrame = screenFrame.insetBy(dx: gaps, dy: gaps)
-        
-        traverse(node: root, frame: paddedFrame) { id, rect in
-            frames[id] = rect
+        guard !windowIds.isEmpty else { return [:] }
+
+        switch windowIds.count {
+        case 1:
+            return calculateSingleWindow(for: screenFrame)
+        case 2:
+            return calculateTwoWindows(for: screenFrame)
+        case 3:
+            return calculateMasterStack(for: screenFrame)
+        default:
+            return calculateGrid(for: screenFrame)
         }
-        
+    }
+
+    // MARK: - Layout Algorithms
+
+    /// Single window - full screen with gaps
+    private func calculateSingleWindow(for screenFrame: CGRect) -> [WindowID: CGRect] {
+        let frame = CGRect(
+            x: screenFrame.origin.x + gaps,
+            y: screenFrame.origin.y + gaps,
+            width: screenFrame.width - (gaps * 2),
+            height: screenFrame.height - (gaps * 2)
+        )
+        return [windowIds[0]: frame]
+    }
+
+    /// Two windows - equal 50/50 split by default, or golden ratio if configured
+    private func calculateTwoWindows(for screenFrame: CGRect) -> [WindowID: CGRect] {
+        var frames: [WindowID: CGRect] = [:]
+
+        let useEqualSplit = ConfigService.shared.config.useEqualSplitForTwo
+        let effectiveRatio = useEqualSplit ? 0.5 : masterRatio
+
+        let usableWidth = screenFrame.width - (gaps * 2)
+
+        let leftWidth = usableWidth * effectiveRatio - (gaps / 2)
+        let rightWidth = usableWidth * (1 - effectiveRatio) - (gaps / 2)
+
+        // Left window (first in list)
+        frames[windowIds[0]] = CGRect(
+            x: screenFrame.origin.x + gaps,
+            y: screenFrame.origin.y + gaps,
+            width: leftWidth,
+            height: screenFrame.height - (gaps * 2)
+        )
+
+        // Right window (second in list)
+        frames[windowIds[1]] = CGRect(
+            x: screenFrame.origin.x + gaps + leftWidth + gaps,
+            y: screenFrame.origin.y + gaps,
+            width: rightWidth,
+            height: screenFrame.height - (gaps * 2)
+        )
+
         return frames
     }
-    
-    // MARK: - internal Logic
-    
-    // MARK: - Pruning
-    
-    /// Prune windows that are no longer in the set of valid IDs
-    func prune(keeping validIds: Set<WindowID>) {
-        // Find windows to remove
-        let toRemove = windowIds.subtracting(validIds)
-        
-        for id in toRemove {
-            removeWindow(id)
-        }
-    }
-    
-    private func insert(_ newId: WindowID, relativeTo targetId: WindowID, in node: BSPNode) -> BSPNode {
-        switch node {
-        case .window(let id):
-            if id == targetId {
-                // Found the target! Split it.
-                // Todo: Determine split direction based on aspect ratio?
-                // Default: Horizontal split (Side-by-side)
-                let newSplit = BSPNode.Split(
-                    type: .horizontal,
-                    ratio: 0.5,
-                    child1: Box(.window(targetId)), // Keep original on left/top
-                    child2: Box(.window(newId))     // New on right/bottom
-                )
-                return .split(newSplit)
-            } else {
-                return node
-            }
-            
-        case .split(let split):
-            // Recurse
-            let newC1 = insert(newId, relativeTo: targetId, in: split.child1.value)
-            let newC2 = insert(newId, relativeTo: targetId, in: split.child2.value)
-            
-            // Check if anything changed (not strictly necessary but clear)
-            // Ideally we'd know which path to take. Here we traverse both which is O(N). Fine for <100 windows.
-            // Actually capturing "did insert" return might be cleaner but this works for replacement.
-            
-            var newSplit = split
-            newSplit.child1 = Box(newC1)
-            newSplit.child2 = Box(newC2)
-            return .split(newSplit)
-        }
-    }
-    
-    private func insertAtAnyLeaf(_ newId: WindowID, in node: BSPNode) -> BSPNode {
-        switch node {
-        case .window(let id):
-            // Split this leaf
-            let newSplit = BSPNode.Split(
-                type: .horizontal,
-                ratio: 0.5,
-                child1: Box(.window(id)),
-                child2: Box(.window(newId))
+
+    /// Master/Stack layout with golden ratio (for 3 windows)
+    private func calculateMasterStack(for screenFrame: CGRect) -> [WindowID: CGRect] {
+        var frames: [WindowID: CGRect] = [:]
+
+        let usableFrame = CGRect(
+            x: screenFrame.origin.x + gaps,
+            y: screenFrame.origin.y + gaps,
+            width: screenFrame.width - (gaps * 2),
+            height: screenFrame.height - (gaps * 2)
+        )
+
+        let masterWidth = usableFrame.width * masterRatio - (gaps / 2)
+        let stackWidth = usableFrame.width * (1 - masterRatio) - (gaps / 2)
+
+        // Master window (left)
+        frames[windowIds[0]] = CGRect(
+            x: usableFrame.origin.x,
+            y: usableFrame.origin.y,
+            width: masterWidth,
+            height: usableFrame.height
+        )
+
+        // Stack windows (right, split vertically)
+        let stackIds = Array(windowIds.dropFirst())
+        let stackCount = stackIds.count
+        let stackItemHeight = (usableFrame.height - (gaps * CGFloat(stackCount - 1))) / CGFloat(stackCount)
+
+        for (index, windowId) in stackIds.enumerated() {
+            let yOffset = CGFloat(index) * (stackItemHeight + gaps)
+            frames[windowId] = CGRect(
+                x: usableFrame.origin.x + masterWidth + gaps,
+                y: usableFrame.origin.y + yOffset,
+                width: stackWidth,
+                height: stackItemHeight
             )
-            return .split(newSplit)
-            
-        case .split(let split):
-            // Prefer left child? Or smaller child?
-            // Simple: Left child.
-            let newC1 = insertAtAnyLeaf(newId, in: split.child1.value)
-            var newSplit = split
-            newSplit.child1 = Box(newC1)
-            return .split(newSplit)
+        }
+
+        return frames
+    }
+
+    /// Grid layout for 4+ windows
+    private func calculateGrid(for screenFrame: CGRect) -> [WindowID: CGRect] {
+        var frames: [WindowID: CGRect] = [:]
+
+        let count = windowIds.count
+
+        // Calculate optimal grid dimensions
+        let (cols, rows) = optimalGrid(for: count)
+
+        let usableWidth = screenFrame.width - (gaps * CGFloat(cols + 1))
+        let usableHeight = screenFrame.height - (gaps * CGFloat(rows + 1))
+
+        let cellWidth = usableWidth / CGFloat(cols)
+        let cellHeight = usableHeight / CGFloat(rows)
+
+        for (index, windowId) in windowIds.enumerated() {
+            let col = index % cols
+            let row = index / cols
+
+            let x = screenFrame.origin.x + gaps + CGFloat(col) * (cellWidth + gaps)
+            let y = screenFrame.origin.y + gaps + CGFloat(row) * (cellHeight + gaps)
+
+            frames[windowId] = CGRect(x: x, y: y, width: cellWidth, height: cellHeight)
+        }
+
+        return frames
+    }
+
+    /// Calculate optimal grid dimensions for N windows
+    /// Prefers layouts that maintain reasonable aspect ratios
+    private func optimalGrid(for count: Int) -> (cols: Int, rows: Int) {
+        // Handle small counts specifically for better layouts
+        switch count {
+        case 4:
+            return (2, 2)  // 2x2 square grid
+        case 5:
+            // 5 windows: prefer 3 cols x 2 rows (3+2=5, fills completely)
+            return (3, 2)
+        case 6:
+            // 6 windows: 3 cols x 2 rows (fills completely)
+            return (3, 2)
+        case 7:
+            // 7 windows: 4 cols x 2 rows = 8 slots, 1 empty
+            // Or 4 cols x 2 rows gives better aspect ratio than 3x3
+            return (4, 2)
+        case 8:
+            // 8 windows: 4 cols x 2 rows (fills completely)
+            return (4, 2)
+        case 9:
+            // 9 windows: 3 cols x 3 rows (fills completely)
+            return (3, 3)
+        case 10:
+            // 10 windows: 5 cols x 2 rows = 10 slots, fills completely
+            return (5, 2)
+        case 11:
+            // 11 windows: 4 cols x 3 rows = 12 slots, 1 empty
+            // Better aspect ratio than 5x3
+            return (4, 3)
+        case 12:
+            // 12 windows: 4 cols x 3 rows = 12 slots, fills completely
+            return (4, 3)
+        default:
+            // For larger counts, find grid that minimizes aspect ratio distortion
+            let cols = Int(ceil(sqrt(Double(count))))
+            let rows = Int(ceil(Double(count) / Double(cols)))
+
+            // Ensure we have enough slots
+            if cols * rows < count {
+                return (cols + 1, rows)
+            }
+
+            return (cols, rows)
         }
     }
-    
-    private func remove(_ targetId: WindowID, from node: BSPNode) -> BSPNode? {
-        switch node {
-        case .window(let id):
-            return id == targetId ? nil : node
-            
-        case .split(let split):
-            let newC1 = remove(targetId, from: split.child1.value)
-            let newC2 = remove(targetId, from: split.child2.value)
-            
-            // If one child became nil, replace this split with the remaining child
-            if newC1 == nil, let rem = newC2 {
-                return rem
-            }
-            if newC2 == nil, let rem = newC1 {
-                return rem
-            }
-            // If both nil, we are nil
-            if newC1 == nil && newC2 == nil {
-                return nil
-            }
-            
-            // Update children
-            var newSplit = split
-            if let c1 = newC1 { newSplit.child1 = Box(c1) }
-            if let c2 = newC2 { newSplit.child2 = Box(c2) }
-            return .split(newSplit)
+
+    /// Calculate frames with one window's size preserved (for resize adaptation)
+    func calculateAdaptedFrames(
+        for screenFrame: CGRect,
+        preservedWindow: WindowID,
+        preservedFrame: CGRect,
+        isVerticalResize: Bool
+    ) -> [WindowID: CGRect] {
+        guard windowIds.count >= 2 else {
+            return calculateFrames(for: screenFrame)
         }
-    }
-    
-    private func traverse(node: BSPNode, frame: CGRect, action: (WindowID, CGRect) -> Void) {
-        switch node {
-        case .window(let id):
-            // Apply inner gaps?
-            // With outer gaps handled, inner gaps are trickier in BSP.
-            // Simple Inner Gap: Inset every window by gap/2
-            let innerPadded = frame.insetBy(dx: gaps/2, dy: gaps/2)
-            action(id, innerPadded)
-            
-        case .split(let split):
-            var f1 = frame
-            var f2 = frame
-            
-            // Calculate divisor
-            // Note: coordinates are top-left usually for layouts.
-            
-            if split.type == .horizontal {
-                // Side by side
-                let splitX = frame.width * split.ratio
-                f1.size.width = splitX
-                f2.origin.x += splitX
-                f2.size.width = frame.width - splitX
+
+        let usableFrame = CGRect(
+            x: screenFrame.origin.x + gaps,
+            y: screenFrame.origin.y + gaps,
+            width: screenFrame.width - (gaps * 2),
+            height: screenFrame.height - (gaps * 2)
+        )
+
+        var frames: [WindowID: CGRect] = [:]
+
+        if windowIds.count == 2 {
+            // Simple 2-window layout with preserved window's new size
+            if preservedWindow == windowIds[0] {
+                // Left window preserved
+                let leftWidth = isVerticalResize ? usableFrame.width / 2 : preservedFrame.width
+                frames[preservedWindow] = CGRect(
+                    x: gaps,
+                    y: gaps,
+                    width: leftWidth,
+                    height: isVerticalResize ? preservedFrame.height : usableFrame.height
+                )
+                frames[windowIds[1]] = CGRect(
+                    x: gaps + leftWidth,
+                    y: gaps,
+                    width: isVerticalResize ? usableFrame.width / 2 : usableFrame.width - leftWidth,
+                    height: usableFrame.height
+                )
             } else {
-                // Top and bottom
-                let splitY = frame.height * split.ratio
-                f1.size.height = splitY
-                f2.origin.y += splitY
-                f2.size.height = frame.height - splitY
+                // Right window preserved
+                let rightWidth = isVerticalResize ? usableFrame.width / 2 : preservedFrame.width
+                let rightX = gaps + usableFrame.width - rightWidth
+                frames[windowIds[0]] = CGRect(
+                    x: gaps,
+                    y: gaps,
+                    width: isVerticalResize ? usableFrame.width / 2 : usableFrame.width - rightWidth,
+                    height: usableFrame.height
+                )
+                frames[preservedWindow] = CGRect(
+                    x: rightX,
+                    y: gaps,
+                    width: rightWidth,
+                    height: isVerticalResize ? preservedFrame.height : usableFrame.height
+                )
             }
-            
-            traverse(node: split.child1.value, frame: f1, action: action)
-            traverse(node: split.child2.value, frame: f2, action: action)
+        } else {
+            // For 3+ windows, use standard layout but with preserved window's dimensions
+            frames = calculateFrames(for: screenFrame)
+
+            if var preserved = frames[preservedWindow] {
+                if isVerticalResize {
+                    // Preserve the new height
+                    preserved.size.height = preservedFrame.height
+                } else {
+                    // Preserve the new width
+                    preserved.size.width = preservedFrame.width
+                }
+                frames[preservedWindow] = preserved
+            }
         }
+
+        return frames
     }
-    
-    // MARK: - Helpers
-    
-    func focusWindow(_ id: WindowID) {
-        lastFocusedWindowId = id
-    }
-    
-    func printTree() {
-        printNode(root, depth: 0)
-    }
-    
-    private func printNode(_ node: BSPNode?, depth: Int) {
-        let prefix = String(repeating: "  ", count: depth)
-        guard let node = node else {
-            print("\(prefix)(nil)")
-            return
-        }
-        
-        switch node {
-        case .window(let id):
-            print("\(prefix)Window[\(id)]")
-        case .split(let split):
-            print("\(prefix)Split(\(split.type) @ \(split.ratio))")
-            printNode(split.child1.value, depth: depth + 1)
-            printNode(split.child2.value, depth: depth + 1)
-        }
+}
+
+// MARK: - Helpers
+
+private extension CGFloat {
+    func clamped(to range: ClosedRange<CGFloat>) -> CGFloat {
+        return Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

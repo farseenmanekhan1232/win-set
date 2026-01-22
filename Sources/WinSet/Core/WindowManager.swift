@@ -4,34 +4,77 @@ import Cocoa
 /// Core window management operations
 /// This is the main interface for window manipulation
 class WindowManager {
-    
+
     private let accessibilityService: AccessibilityService
-    
+
     init(accessibilityService: AccessibilityService = .shared) {
         self.accessibilityService = accessibilityService
     }
-    
+
     // MARK: - State
-    
+
     private struct SnapAction {
         let windowId: WindowID
         let position: SnapPosition
         let ratio: CGFloat
         let timestamp: Date
     }
-    
+
     private var lastSnapAction: SnapAction?
-    
+
+    // Window cache for focus operations
+    private var windowCache: [Window] = []
+    private var windowCacheTask: Task<Void, Never>?
+    private let windowCacheDuration: TimeInterval = 2.0
+
+    // MARK: - Window Cache
+
+    /// Get all windows with caching
+    private func getAllWindowsCached() async -> [Window] {
+        if !windowCache.isEmpty {
+            return windowCache
+        }
+
+        let windows = await accessibilityService.getAllWindows()
+        windowCache = windows
+
+        // Refresh cache after duration
+        windowCacheTask?.cancel()
+        windowCacheTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(self?.windowCacheDuration ?? 2.0 * 1_000_000_000))
+            await self?.refreshWindowCache()
+        }
+
+        return windows
+    }
+
+    /// Get focused window with caching
+    private func getFocusedWindowCached() async -> Window? {
+        // For focused window, always query fresh as it's critical for correctness
+        return await accessibilityService.getFocusedWindow()
+    }
+
+    /// Refresh the window cache
+    private func refreshWindowCache() async {
+        windowCache = await accessibilityService.getAllWindows()
+    }
+
+    /// Invalidate the window cache (call after focus changes)
+    private func invalidateWindowCache() {
+        windowCacheTask?.cancel()
+        windowCache = []
+    }
+
     // MARK: - Focus Operations
-    
+
     /// Focus the window in the specified direction from the current window
     func focusDirection(_ direction: Direction) async {
-        guard let currentWindow = await accessibilityService.getFocusedWindow() else {
+        guard let currentWindow = await getFocusedWindowCached() else {
             print("No focused window")
             return
         }
-        
-        let allWindows = await accessibilityService.getAllWindows()
+
+        let allWindows = await getAllWindowsCached()
         
         // Filter to windows in the specified direction
         let candidateWindows = allWindows.filter { window in
@@ -53,17 +96,19 @@ class WindowManager {
         if let targetWindow = nearest {
             do {
                 try await accessibilityService.focusWindow(targetWindow)
+                // Invalidate cache after focus change
+                invalidateWindowCache()
                 print("Focused: \(targetWindow.title) (\(targetWindow.appName))")
             } catch {
                 print("Failed to focus window: \(error)")
             }
         }
     }
-    
+
     /// Focus window by number (based on position from left to right, top to bottom)
     func focusWindowNumber(_ number: Int) async {
-        let allWindows = await accessibilityService.getAllWindows()
-        
+        let allWindows = await getAllWindowsCached()
+
         // Sort windows by position (left to right, top to bottom)
         let sortedWindows = allWindows.sorted { a, b in
             if abs(a.frame.minY - b.frame.minY) < 50 {
@@ -73,24 +118,25 @@ class WindowManager {
             // Sort by Y (remember: lower Y is higher on screen in macOS coords)
             return a.frame.minY < b.frame.minY
         }
-        
+
         let index = number - 1
         guard index >= 0 && index < sortedWindows.count else {
             print("No window at position \(number)")
             return
         }
-        
+
         let targetWindow = sortedWindows[index]
         do {
             try await accessibilityService.focusWindow(targetWindow)
+            invalidateWindowCache()
             print("Focused window \(number): \(targetWindow.title)")
         } catch {
             print("Failed to focus window: \(error)")
         }
     }
-    
+
     // MARK: - Move/Snap Operations
-    
+
     /// Snap the focused window to a half of the screen
     /// Snap the focused window to a half of the screen
     @MainActor
@@ -102,10 +148,10 @@ class WindowManager {
         case .up: snapPosition = .topHalf
         case .down: snapPosition = .bottomHalf
         }
-        
+
         await snapTo(snapPosition)
     }
-    
+
     /// Snap the focused window to a predefined position
     @MainActor
     func snapTo(_ position: SnapPosition) async {
@@ -113,7 +159,7 @@ class WindowManager {
             print("No focused window")
             return
         }
-        
+
         guard let screen = screenContaining(window: window) else {
             print("Could not determine screen for window")
             return
@@ -121,7 +167,7 @@ class WindowManager {
 
         // Determine snap ratio (Cycle: 0.5 -> 0.67 -> 0.33 -> 0.5)
         var ratio: CGFloat = 0.5
-        
+
         // Check for repeated snap action
         if let last = lastSnapAction,
            last.windowId == window.id,
@@ -150,45 +196,49 @@ class WindowManager {
         // Update last snap action with the NEW ratio
         lastSnapAction = SnapAction(windowId: window.id, position: position, ratio: ratio, timestamp: Date())
 
-        // Calculate target frame
-        // We need to override the width if it's a side snap
-        var targetFrame = position.frame(on: screen, gaps: ConfigService.shared.config.gaps)
-        
-        // Only apply ratio if it's a side snap
+        // Calculate target frame using consistent gap math
+        let gaps = ConfigService.shared.config.gaps
+        let visibleFrame = screen.visibleFrame
+        var targetFrame: CGRect
+
+        // For side snaps with custom ratio, calculate frame directly
         if [.leftHalf, .rightHalf].contains(position) && ratio != 0.5 {
-             let screenFrame = screen.visibleFrame
-             let gaps = ConfigService.shared.config.gaps
-             let width = (screenFrame.width * ratio) - (CGFloat(gaps) * 1.5) // Adjust for gaps
-             
-             targetFrame.size.width = width
-             
-             if position == .rightHalf {
-                 targetFrame.origin.x = screenFrame.maxX - width - CGFloat(gaps)
-             }
+            let halfWidth = (visibleFrame.width - gaps * 2) * ratio
+
+            if position == .leftHalf {
+                targetFrame = CGRect(
+                    x: visibleFrame.minX + gaps,
+                    y: visibleFrame.minY + gaps,
+                    width: halfWidth,
+                    height: visibleFrame.height - gaps * 2
+                )
+            } else { // rightHalf
+                targetFrame = CGRect(
+                    x: visibleFrame.maxX - halfWidth - gaps,
+                    y: visibleFrame.minY + gaps,
+                    width: halfWidth,
+                    height: visibleFrame.height - gaps * 2
+                )
+            }
+        } else {
+            // Use standard snap position calculation
+            targetFrame = position.frame(on: screen, gaps: gaps)
         }
-        
+
         // Convert to AX Coordinates (Global Top-Left origin)
-        guard let mainHeight = NSScreen.screens.first?.frame.height else { return }
-        
+        // Use target screen's frame height for proper multi-monitor support
+        let screenHeight = screen.frame.height
+
         let axFrame = CGRect(
             x: targetFrame.origin.x,
-            y: mainHeight - targetFrame.maxY,
+            y: screenHeight - targetFrame.maxY,
             width: targetFrame.width,
             height: targetFrame.height
         )
-        
+
         do {
             try await accessibilityService.setWindowFrame(window, to: axFrame)
             print("Snapped to \(position)")
-            
-            // Notify tiling manager about the ratio change for side snaps
-            if [.leftHalf, .rightHalf].contains(position) {
-                TilingManager.shared.updateWindowRatio(
-                    windowId: window.id,
-                    ratio: ratio,
-                    newFrame: axFrame
-                )
-            }
         } catch {
             print("Failed to snap window: \(error)")
         }
@@ -320,29 +370,6 @@ class WindowManager {
         }
     }
     
-    // MARK: - Workspace Operations
-    
-    /// Switch to a specific workspace
-    func switchToWorkspace(_ id: Int) async {
-        await WorkspaceManager.shared.switchToWorkspace(id)
-        print("Switched to Workspace \(id)")
-    }
-    
-    /// Move focused window to a specific workspace
-    func moveWindowToWorkspace(_ id: Int) async {
-        guard let window = await accessibilityService.getFocusedWindow() else {
-            print("No focused window")
-            return
-        }
-        
-        await WorkspaceManager.shared.moveWindow(window, toWorkspace: id)
-        
-        // Follow the window? Or stay?
-        // Typically people want to follow or stay. AeroSpace stays.
-        // Let's stay in current workspace for now.
-        print("Moved '\(window.title)' to Workspace \(id)")
-    }
-    
     // MARK: - Helpers
     
     @MainActor
@@ -396,8 +423,8 @@ class WindowManager {
     
     @MainActor
     private func flippedFrame(for screen: NSScreen) -> CGRect {
-        guard let mainHeight = NSScreen.screens.first?.frame.height else { return screen.frame }
         let f = screen.frame
+        let mainHeight = NSScreen.screens.first?.frame.height ?? f.height
         return CGRect(x: f.origin.x, y: mainHeight - f.origin.y - f.height, width: f.width, height: f.height)
     }
     

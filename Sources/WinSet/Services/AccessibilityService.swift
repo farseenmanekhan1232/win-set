@@ -336,6 +336,17 @@ actor AccessibilityService {
         // Skip tiny windows (likely hidden/utility windows)
         guard size.width > 100 && size.height > 100 else { return nil }
         
+        // Skip windows positioned way off-screen (likely docked/minimized to Dock)
+        // Use CGDisplay bounds which uses the same coordinate system as AX API (top-left origin)
+        var displayCount: UInt32 = 0
+        var displays = [CGDirectDisplayID](repeating: 0, count: 16)
+        let windowFrame = CGRect(origin: position, size: size)
+        
+        CGGetDisplaysWithRect(windowFrame, UInt32(displays.count), &displays, &displayCount)
+        
+        // Window must be on at least one display
+        guard displayCount > 0 else { return nil }
+        
         // Get title
         var titleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef)
@@ -348,6 +359,9 @@ actor AccessibilityService {
         
         // Skip minimized windows
         guard !isMinimized else { return nil }
+        
+        // Check if app is hidden
+        if app.isHidden { return nil }
         
         // Get fullscreen state
         var fullscreenRef: CFTypeRef?

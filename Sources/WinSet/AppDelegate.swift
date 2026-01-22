@@ -5,9 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var winSetApp: App?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-
-        
-        // Start the window manager
+        // Start the window manager (handles its own status bar)
         winSetApp = App()
         winSetApp?.run()
     }

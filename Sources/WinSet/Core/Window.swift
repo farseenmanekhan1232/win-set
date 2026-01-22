@@ -34,9 +34,9 @@ enum SnapPosition: String, CaseIterable {
     /// Calculate frame for this snap position on given screen
     func frame(on screen: NSScreen, gaps: CGFloat = 10) -> CGRect {
         let visibleFrame = screen.visibleFrame
-        let halfWidth = (visibleFrame.width - gaps * 3) / 2
-        let halfHeight = (visibleFrame.height - gaps * 3) / 2
-        
+        let halfWidth = (visibleFrame.width - gaps * 2) / 2
+        let halfHeight = (visibleFrame.height - gaps * 2) / 2
+
         switch self {
         case .leftHalf:
             return CGRect(
@@ -47,7 +47,7 @@ enum SnapPosition: String, CaseIterable {
             )
         case .rightHalf:
             return CGRect(
-                x: visibleFrame.midX + gaps / 2,
+                x: visibleFrame.midX + gaps,
                 y: visibleFrame.minY + gaps,
                 width: halfWidth,
                 height: visibleFrame.height - gaps * 2
@@ -55,7 +55,7 @@ enum SnapPosition: String, CaseIterable {
         case .topHalf:
             return CGRect(
                 x: visibleFrame.minX + gaps,
-                y: visibleFrame.midY + gaps / 2,
+                y: visibleFrame.midY + gaps,
                 width: visibleFrame.width - gaps * 2,
                 height: halfHeight
             )
@@ -69,14 +69,14 @@ enum SnapPosition: String, CaseIterable {
         case .topLeft:
             return CGRect(
                 x: visibleFrame.minX + gaps,
-                y: visibleFrame.midY + gaps / 2,
+                y: visibleFrame.midY + gaps,
                 width: halfWidth,
                 height: halfHeight
             )
         case .topRight:
             return CGRect(
-                x: visibleFrame.midX + gaps / 2,
-                y: visibleFrame.midY + gaps / 2,
+                x: visibleFrame.midX + gaps,
+                y: visibleFrame.midY + gaps,
                 width: halfWidth,
                 height: halfHeight
             )
@@ -89,7 +89,7 @@ enum SnapPosition: String, CaseIterable {
             )
         case .bottomRight:
             return CGRect(
-                x: visibleFrame.midX + gaps / 2,
+                x: visibleFrame.midX + gaps,
                 y: visibleFrame.minY + gaps,
                 width: halfWidth,
                 height: halfHeight
