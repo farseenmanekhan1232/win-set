@@ -114,7 +114,11 @@ class LayoutEngine {
         switch windowIds.count {
         case 1:
             return calculateSingleWindow(for: screenFrame)
-        case 2, 3:
+        case 2:
+            // 50/50 split for 2 windows
+            return calculateSplit(for: screenFrame)
+        case 3:
+            // Master/Stack for 3 windows
             return calculateMasterStack(for: screenFrame)
         default:
             return calculateGrid(for: screenFrame)
@@ -133,8 +137,40 @@ class LayoutEngine {
         )
         return [windowIds[0]: frame]
     }
+    
+    /// 2 Windows - 50/50 Split
+    private func calculateSplit(for screenFrame: CGRect) -> [WindowID: CGRect] {
+        var frames: [WindowID: CGRect] = [:]
+        
+        let usableFrame = CGRect(
+            x: screenFrame.origin.x + gaps,
+            y: screenFrame.origin.y + gaps,
+            width: screenFrame.width - (gaps * 2),
+            height: screenFrame.height - (gaps * 2)
+        )
+        
+        let width = (usableFrame.width - gaps) / 2
+        
+        // Left
+        frames[windowIds[0]] = CGRect(
+            x: usableFrame.origin.x,
+            y: usableFrame.origin.y,
+            width: width,
+            height: usableFrame.height
+        )
+        
+        // Right
+        frames[windowIds[1]] = CGRect(
+            x: usableFrame.origin.x + width + gaps,
+            y: usableFrame.origin.y,
+            width: width,
+            height: usableFrame.height
+        )
+        
+        return frames
+    }
 
-    /// Master/Stack layout with golden ratio (for 2-3 windows)
+    /// Master/Stack layout with golden ratio (for 3 windows)
     private func calculateMasterStack(for screenFrame: CGRect) -> [WindowID: CGRect] {
         var frames: [WindowID: CGRect] = [:]
 
