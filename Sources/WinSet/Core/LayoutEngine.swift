@@ -103,10 +103,7 @@ class LayoutEngine {
         masterRatio = Self.goldenRatio
     }
 
-    /// Set ratio to 0.5 for equal split
-    func setEqualSplit() {
-        masterRatio = 0.5
-    }
+
 
     // MARK: - Frame Calculation
 
@@ -117,9 +114,7 @@ class LayoutEngine {
         switch windowIds.count {
         case 1:
             return calculateSingleWindow(for: screenFrame)
-        case 2:
-            return calculateTwoWindows(for: screenFrame)
-        case 3:
+        case 2, 3:
             return calculateMasterStack(for: screenFrame)
         default:
             return calculateGrid(for: screenFrame)
@@ -139,38 +134,7 @@ class LayoutEngine {
         return [windowIds[0]: frame]
     }
 
-    /// Two windows - equal 50/50 split by default, or golden ratio if configured
-    private func calculateTwoWindows(for screenFrame: CGRect) -> [WindowID: CGRect] {
-        var frames: [WindowID: CGRect] = [:]
-
-        let useEqualSplit = ConfigService.shared.config.useEqualSplitForTwo
-        let effectiveRatio = useEqualSplit ? 0.5 : masterRatio
-
-        let usableWidth = screenFrame.width - (gaps * 2)
-
-        let leftWidth = usableWidth * effectiveRatio - (gaps / 2)
-        let rightWidth = usableWidth * (1 - effectiveRatio) - (gaps / 2)
-
-        // Left window (first in list)
-        frames[windowIds[0]] = CGRect(
-            x: screenFrame.origin.x + gaps,
-            y: screenFrame.origin.y + gaps,
-            width: leftWidth,
-            height: screenFrame.height - (gaps * 2)
-        )
-
-        // Right window (second in list)
-        frames[windowIds[1]] = CGRect(
-            x: screenFrame.origin.x + gaps + leftWidth + gaps,
-            y: screenFrame.origin.y + gaps,
-            width: rightWidth,
-            height: screenFrame.height - (gaps * 2)
-        )
-
-        return frames
-    }
-
-    /// Master/Stack layout with golden ratio (for 3 windows)
+    /// Master/Stack layout with golden ratio (for 2-3 windows)
     private func calculateMasterStack(for screenFrame: CGRect) -> [WindowID: CGRect] {
         var frames: [WindowID: CGRect] = [:]
 

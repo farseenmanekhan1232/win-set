@@ -10,12 +10,8 @@ struct Config: Codable {
     /// Gap between windows (pixels)
     var gaps: Double = 10.0
 
-    /// Use equal 50/50 split for 2 windows instead of golden ratio
-    var useEqualSplitForTwo: Bool = true
-
-    /// When true: windows snap back to layout after resize
-    /// When false: manual resize is preserved, other windows adjust
-    var enableAutoTiling: Bool = true
+    /// Applications to ignore (by app name)
+    var ignoredApps: [String] = []
 
     /// Key bindings
     var bindings: BindingsConfig = BindingsConfig()
@@ -37,7 +33,8 @@ struct BindingsConfig: Codable {
         "f": "center",
         "shift-f": "maximize",
         "bracketleft": "focus monitor left",
-        "bracketright": "focus monitor right"
+        "bracketright": "focus monitor right",
+        "r": "retile"
     ]
 }
 

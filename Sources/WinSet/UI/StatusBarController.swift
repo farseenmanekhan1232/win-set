@@ -36,6 +36,14 @@ class StatusBarController {
         // Keybindings help
         menu.addItem(createKeybindingsSubmenu())
         
+        // ... existing menu items
+        menu.addItem(NSMenuItem.separator())
+        
+        // Ignore App
+        let ignoreItem = NSMenuItem(title: "Ignore Focused App", action: #selector(ignoreFocusedApp), keyEquivalent: "")
+        ignoreItem.target = self
+        menu.addItem(ignoreItem)
+        
         menu.addItem(NSMenuItem.separator())
         
         // Quit
@@ -55,6 +63,7 @@ class StatusBarController {
             ("Ctrl + f", "Center window"),
             ("Ctrl + Shift + F", "Maximize window"),
             ("Ctrl + [ / ]", "Focus monitor left/right"),
+            ("Ctrl + r", "Re-tile screen")
         ]
         
         for (key, description) in bindings {
@@ -66,6 +75,23 @@ class StatusBarController {
         let item = NSMenuItem(title: "Keybindings", action: nil, keyEquivalent: "")
         item.submenu = submenu
         return item
+    }
+
+    @objc private func ignoreFocusedApp() {
+        Task {
+            if let window = await AccessibilityService.shared.getFocusedWindow() {
+                let appName = window.appName
+                
+                // Add to ignore list
+                ConfigService.shared.ignoreApp(appName)
+                
+                // Trigger retile to remove it from layout immediately
+                await TilingManager.shared.retileCurrentScreen()
+                
+                // Optional: Show alert/notification?
+                // For now, just print logic is handled in ConfigService
+            }
+        }
     }
     
     @objc private func quitApp() {
