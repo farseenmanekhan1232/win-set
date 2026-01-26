@@ -177,6 +177,17 @@ class TilingManager: WindowObserverDelegate {
         
         print("🔄 Re-tiling screen \(screenId)")
         queue.async {
+            // Check if the focused window is missing from our tracking (e.g. was ignored)
+            if self.axCache[focusedWindow.id] == nil {
+                // Try to add it now
+                if !self.shouldIgnore(window: focusedWindow.axElement, appName: focusedWindow.appName, title: focusedWindow.title, frame: focusedWindow.frame) {
+                     print("  → Adding previously ignored window \(focusedWindow.id) (\(focusedWindow.appName))")
+                     self.windowScreens[focusedWindow.id] = screenId
+                     self.axCache[focusedWindow.id] = focusedWindow.axElement
+                     self.getEngine(for: screenId).addWindow(focusedWindow.id)
+                }
+            }
+            
             self.applyLayout(for: screenId)
         }
     }

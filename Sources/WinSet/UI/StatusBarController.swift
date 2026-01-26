@@ -1,11 +1,12 @@
 import Cocoa
 
 /// Simple status bar controller for the menu bar icon
-class StatusBarController {
+class StatusBarController: NSObject, NSMenuDelegate {
     
     private var statusItem: NSStatusItem?
     
-    init() {
+    override init() {
+        super.init()
         setupStatusItem()
     }
     
@@ -39,9 +40,10 @@ class StatusBarController {
         // ... existing menu items
         menu.addItem(NSMenuItem.separator())
         
-        // Ignore App
-        let ignoreItem = NSMenuItem(title: "Ignore Focused App", action: #selector(ignoreFocusedApp), keyEquivalent: "")
+        // Ignore App - Dynamic title will be set in menuNeedsUpdate
+        let ignoreItem = NSMenuItem(title: "Ignore Focused App", action: #selector(toggleIgnoreFocusedApp), keyEquivalent: "")
         ignoreItem.target = self
+        ignoreItem.tag = 100 // Tag to find it easily
         menu.addItem(ignoreItem)
         
         menu.addItem(NSMenuItem.separator())
@@ -51,6 +53,7 @@ class StatusBarController {
         quitItem.target = self
         menu.addItem(quitItem)
         
+        menu.delegate = self
         statusItem?.menu = menu
     }
     
@@ -77,19 +80,47 @@ class StatusBarController {
         return item
     }
 
-    @objc private func ignoreFocusedApp() {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard let ignoreItem = menu.items.first(where: { $0.tag == 100 }) else { return }
+        
+        // Synchronously check frontmost app name
+        if let app = NSWorkspace.shared.frontmostApplication,
+           let name = app.localizedName {
+            
+            let isIgnored = ConfigService.shared.config.ignoredApps.contains(name)
+            ignoreItem.title = isIgnored ? "Un-ignore \"\(name)\"" : "Ignore \"\(name)\""
+            ignoreItem.isEnabled = true
+        } else {
+            ignoreItem.title = "Ignore Focused App"
+            ignoreItem.isEnabled = false
+        }
+    }
+
+    @objc private func toggleIgnoreFocusedApp() {
         Task {
             if let window = await AccessibilityService.shared.getFocusedWindow() {
                 let appName = window.appName
+                let isIgnored = ConfigService.shared.config.ignoredApps.contains(appName)
                 
-                // Add to ignore list
-                ConfigService.shared.ignoreApp(appName)
+                if isIgnored {
+                    ConfigService.shared.unignoreApp(appName)
+                } else {
+                    ConfigService.shared.ignoreApp(appName)
+                }
                 
-                // Trigger retile to remove it from layout immediately
+                // Trigger retile to remove or add it back to layout
                 await TilingManager.shared.retileCurrentScreen()
-                
-                // Optional: Show alert/notification?
-                // For now, just print logic is handled in ConfigService
+            } else {
+                // Fallback using NSWorkspace if Accessibility fails to get window but we have an app
+                 if let app = NSWorkspace.shared.frontmostApplication, let name = app.localizedName {
+                     let isIgnored = ConfigService.shared.config.ignoredApps.contains(name)
+                     if isIgnored {
+                         ConfigService.shared.unignoreApp(name)
+                     } else {
+                         ConfigService.shared.ignoreApp(name)
+                     }
+                      await TilingManager.shared.retileCurrentScreen()
+                 }
             }
         }
     }

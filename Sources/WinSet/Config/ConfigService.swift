@@ -65,4 +65,13 @@ class ConfigService {
         save()
         print("🚫 Added '\(appName)' to ignore list")
     }
+
+    /// Remove an app from the ignore list and save
+    func unignoreApp(_ appName: String) {
+        if let index = config.ignoredApps.firstIndex(of: appName) {
+            config.ignoredApps.remove(at: index)
+            save()
+            print("✅ Removed '\(appName)' from ignore list")
+        }
+    }
 }
