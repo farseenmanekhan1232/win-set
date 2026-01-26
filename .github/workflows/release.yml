@@ -151,6 +151,8 @@ jobs:
             homepage "https://github.com/farseenmanekhan1232/win-set"
             
             app "WinSet.app"
+
+            uninstall quit: "com.winset.app"
             
             postflight do
               system_command "/usr/bin/defaults", args: ["write", "com.winset.app", "SUAutomaticallyUpdate", "-bool", "true"]
