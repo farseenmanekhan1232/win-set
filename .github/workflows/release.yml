@@ -154,6 +154,11 @@ jobs:
 
             uninstall quit: "com.winset.app"
             
+            preflight do
+              system_command "/usr/bin/pkill", args: ["-f", "WinSet"], check_exit_status: false
+              system_command "/bin/rm", args: ["-rf", "/Applications/WinSet.app"], sudo: true
+            end
+            
             postflight do
               system_command "/usr/bin/defaults", args: ["write", "com.winset.app", "SUAutomaticallyUpdate", "-bool", "true"]
             end
