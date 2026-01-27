@@ -289,10 +289,13 @@ class LayoutEngine {
     func calculateAdaptedFrames(
         for screenFrame: CGRect,
         preservedWindow: WindowID,
-        preservedFrame: CGRect,
-        isVerticalResize: Bool
+        preservedFrame: CGRect
     ) -> [WindowID: CGRect] {
         guard windowIds.count >= 2 else {
+            return calculateFrames(for: screenFrame)
+        }
+        
+        guard let preservedIndex = windowIds.firstIndex(of: preservedWindow) else {
             return calculateFrames(for: screenFrame)
         }
 
@@ -304,54 +307,115 @@ class LayoutEngine {
         )
 
         var frames: [WindowID: CGRect] = [:]
+        
+        // Clamp preserved width to valid range
+        let minWidth = gaps * 4
+        let maxWidth = usableFrame.width - gaps - minWidth
+        let preservedWidth = max(minWidth, min(preservedFrame.width, maxWidth))
 
-        if windowIds.count == 2 {
-            // Simple 2-window layout with preserved window's new size
-            if preservedWindow == windowIds[0] {
+        switch windowIds.count {
+        case 2:
+            // 2-window adaptive: preserve width of resized window
+            let otherIndex = preservedIndex == 0 ? 1 : 0
+            let otherWidth = usableFrame.width - preservedWidth - gaps
+            
+            if preservedIndex == 0 {
                 // Left window preserved
-                let leftWidth = isVerticalResize ? usableFrame.width / 2 : preservedFrame.width
-                frames[preservedWindow] = CGRect(
-                    x: gaps,
-                    y: gaps,
-                    width: leftWidth,
-                    height: isVerticalResize ? preservedFrame.height : usableFrame.height
+                frames[windowIds[0]] = CGRect(
+                    x: usableFrame.origin.x,
+                    y: usableFrame.origin.y,
+                    width: preservedWidth,
+                    height: usableFrame.height
                 )
                 frames[windowIds[1]] = CGRect(
-                    x: gaps + leftWidth,
-                    y: gaps,
-                    width: isVerticalResize ? usableFrame.width / 2 : usableFrame.width - leftWidth,
+                    x: usableFrame.origin.x + preservedWidth + gaps,
+                    y: usableFrame.origin.y,
+                    width: otherWidth,
                     height: usableFrame.height
                 )
             } else {
                 // Right window preserved
-                let rightWidth = isVerticalResize ? usableFrame.width / 2 : preservedFrame.width
-                let rightX = gaps + usableFrame.width - rightWidth
                 frames[windowIds[0]] = CGRect(
-                    x: gaps,
-                    y: gaps,
-                    width: isVerticalResize ? usableFrame.width / 2 : usableFrame.width - rightWidth,
+                    x: usableFrame.origin.x,
+                    y: usableFrame.origin.y,
+                    width: otherWidth,
                     height: usableFrame.height
                 )
-                frames[preservedWindow] = CGRect(
-                    x: rightX,
-                    y: gaps,
-                    width: rightWidth,
-                    height: isVerticalResize ? preservedFrame.height : usableFrame.height
+                frames[windowIds[1]] = CGRect(
+                    x: usableFrame.origin.x + otherWidth + gaps,
+                    y: usableFrame.origin.y,
+                    width: preservedWidth,
+                    height: usableFrame.height
                 )
             }
-        } else {
-            // For 3+ windows, use standard layout but with preserved window's dimensions
-            frames = calculateFrames(for: screenFrame)
-
-            if var preserved = frames[preservedWindow] {
-                if isVerticalResize {
-                    // Preserve the new height
-                    preserved.size.height = preservedFrame.height
-                } else {
-                    // Preserve the new width
-                    preserved.size.width = preservedFrame.width
+            
+        case 3:
+            // 3-window adaptive: Master/Stack layout
+            if preservedIndex == 0 {
+                // Master window resized - update ratio and recalculate
+                let newRatio = (preservedWidth / (usableFrame.width - gaps)).clamped(to: 0.2...0.8)
+                masterRatio = newRatio
+                frames = calculateMasterStack(for: screenFrame)
+            } else {
+                // Stack window resized - adjust stack heights
+                let masterWidth = usableFrame.width * masterRatio - (gaps / 2)
+                let stackWidth = usableFrame.width * (1 - masterRatio) - (gaps / 2)
+                
+                // Master window
+                frames[windowIds[0]] = CGRect(
+                    x: usableFrame.origin.x,
+                    y: usableFrame.origin.y,
+                    width: masterWidth,
+                    height: usableFrame.height
+                )
+                
+                // Stack windows - preserve the resized one's height
+                let stackIds = Array(windowIds.dropFirst())
+                let stackCount = stackIds.count
+                
+                // Calculate preserved window's height (clamped)
+                let minHeight = gaps * 4
+                let maxHeight = usableFrame.height - gaps * CGFloat(stackCount - 1) - minHeight * CGFloat(stackCount - 1)
+                let preservedHeight = max(minHeight, min(preservedFrame.height, maxHeight))
+                
+                // Calculate remaining height for other stack windows
+                let remainingHeight = usableFrame.height - preservedHeight - gaps * CGFloat(stackCount - 1)
+                let otherHeight = remainingHeight / CGFloat(stackCount - 1)
+                
+                var yOffset: CGFloat = 0
+                for (index, windowId) in stackIds.enumerated() {
+                    let height: CGFloat
+                    if windowId == preservedWindow {
+                        height = preservedHeight
+                    } else {
+                        height = max(minHeight, otherHeight)
+                    }
+                    
+                    frames[windowId] = CGRect(
+                        x: usableFrame.origin.x + masterWidth + gaps,
+                        y: usableFrame.origin.y + yOffset,
+                        width: stackWidth,
+                        height: height
+                    )
+                    yOffset += height + gaps
                 }
-                frames[preservedWindow] = preserved
+            }
+            
+        default:
+            // Grid layout - more complex
+            // For now, just use standard layout and preserve the window's new size
+            // This could be enhanced later to properly adjust the grid
+            frames = calculateFrames(for: screenFrame)
+            
+            // Override the preserved window's frame
+            if let originalFrame = frames[preservedWindow] {
+                // Preserve width, keep position and height from layout
+                frames[preservedWindow] = CGRect(
+                    x: originalFrame.origin.x,
+                    y: originalFrame.origin.y,
+                    width: min(preservedWidth, usableFrame.width - originalFrame.origin.x + usableFrame.origin.x),
+                    height: originalFrame.height
+                )
             }
         }
 

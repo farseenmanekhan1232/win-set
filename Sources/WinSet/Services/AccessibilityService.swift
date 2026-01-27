@@ -46,6 +46,28 @@ actor AccessibilityService {
         return AXIsProcessTrusted()
     }
     
+    /// Get window IDs that are currently on-screen (visible on current Space)
+    /// This filters out windows on other desktops/Spaces
+    nonisolated func getOnScreenWindowIDs() -> Set<CGWindowID> {
+        // optionOnScreenOnly returns only windows visible on the current Space
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        
+        var onScreenIds = Set<CGWindowID>()
+        for windowInfo in windowList {
+            // Note: We removed the layer 0 filter because:
+            // - Electron apps (Notion, Arc, Slack) use layer 25
+            // - The shouldIgnore() filters in TilingManager handle filtering non-tileable windows
+            guard let windowID = windowInfo[kCGWindowNumber as String] as? CGWindowID else {
+                continue
+            }
+            onScreenIds.insert(windowID)
+        }
+        return onScreenIds
+    }
+    
     // MARK: - Window Queries
     
     /// Get all visible windows across all applications

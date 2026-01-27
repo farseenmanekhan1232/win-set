@@ -28,6 +28,10 @@ class TilingManager: WindowObserverDelegate {
     private var resizeDragScreenId: CGDirectDisplayID?
     private let resizeDebounceInterval: TimeInterval = 0.15
     private let dragThreshold: CGFloat = 50
+    
+    // User resize tracking (for adaptive layout)
+    private var activeResizeWindowId: WindowID?
+    private var resizeStartFrame: CGRect?
 
     init() {}
     
@@ -41,10 +45,73 @@ class TilingManager: WindowObserverDelegate {
             engine.gaps = gaps
         }
         
+        // Observe Space changes (user switching desktops)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(spaceDidChange),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
+        
         // Discover existing windows
         discoverExistingWindows()
         
         print("TilingManager: Started")
+    }
+    
+    @objc private func spaceDidChange(_ notification: Notification) {
+        print("🔄 Space changed - updating window tracking")
+        
+        // Don't clear everything - just update tracking for the new Space
+        // This preserves existing window positions
+        queue.async {
+            // Clear tracking caches but keep frameCache to avoid re-tiling
+            // The next applyLayout will filter by on-screen status
+            for (_, engine) in self.engines {
+                engine.prune(keeping: [])
+            }
+            self.windowScreens.removeAll()
+            self.axCache.removeAll()
+            // Note: NOT clearing frameCache - this preserves layout state
+        }
+        
+        // Re-discover windows on new Space WITHOUT applying layout
+        discoverExistingWindowsWithoutLayout()
+    }
+    
+    /// Discover windows but don't apply layout (used for Space changes)
+    private func discoverExistingWindowsWithoutLayout() {
+        Task {
+            let windows = await AccessibilityService.shared.getAllWindows()
+            let onScreenIds = AccessibilityService.shared.getOnScreenWindowIDs()
+            print("TilingManager: Space switch - found \(onScreenIds.count) windows on current Space")
+            
+            self.queue.async {
+                for window in windows {
+                    guard !window.isFullscreen && !window.isMinimized else { continue }
+                    
+                    // Filter out windows on other Spaces
+                    guard onScreenIds.contains(window.id) else { continue }
+                    
+                    // Filter Logic
+                    if self.shouldIgnore(window: window.axElement, appName: window.appName, title: window.title, frame: window.frame) {
+                        continue
+                    }
+                    
+                    let screenId = self.getScreenID(for: window.frame)
+                    
+                    // Only add if not already tracked
+                    if self.axCache[window.id] == nil {
+                        self.windowScreens[window.id] = screenId
+                        self.axCache[window.id] = window.axElement
+                        self.getEngine(for: screenId).addWindow(window.id)
+                        
+                        // Store current frame (don't change position)
+                        self.frameCache[window.id] = window.frame
+                    }
+                }
+            }
+        }
     }
     
     // MARK: - Window Filtering
@@ -79,11 +146,10 @@ class TilingManager: WindowObserverDelegate {
         }
         
         // 4. Title Heuristics
-        // Ignore windows with empty titles (common for autocomplete, tooltips, hidden overlay windows)
-        if let title = title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            print("  Ignored (Empty Title): \(appName ?? "?")")
-            return true
-        }
+        // Note: We STOPPED filtering empty titles because:
+        // - Terminal emulators like Ghostty often have empty titles
+        // - Some Chromium-based apps have empty titles for main windows
+        // The subrole, size, and resizability checks are more reliable
         
         // 5. Size Heuristics
         // Ignore very small windows (likely tooltips, hidden helpers)
@@ -124,7 +190,10 @@ class TilingManager: WindowObserverDelegate {
     private func discoverExistingWindows() {
         Task {
             let windows = await AccessibilityService.shared.getAllWindows()
-            print("TilingManager: Discovered \(windows.count) existing windows")
+            let onScreenIds = AccessibilityService.shared.getOnScreenWindowIDs()
+            print("TilingManager: Discovered \(windows.count) AX windows")
+            print("  On-screen IDs from CGWindowList: \(onScreenIds.sorted())")
+            print("  AX window IDs: \(windows.map { $0.id }.sorted())")
             
             self.queue.async {
                 var needsLayout = Set<CGDirectDisplayID>()
@@ -132,6 +201,12 @@ class TilingManager: WindowObserverDelegate {
                 
                 for window in windows {
                     guard !window.isFullscreen && !window.isMinimized else { continue }
+                    
+                    // Filter out windows on other Spaces/Desktops
+                    guard onScreenIds.contains(window.id) else {
+                        print("  ⏭️ Skipping window \(window.id) (\(window.appName)) - not in on-screen set")
+                        continue
+                    }
                     
                     // Filter Logic
                     if self.shouldIgnore(window: window.axElement, appName: window.appName, title: window.title, frame: window.frame) {
@@ -280,10 +355,19 @@ class TilingManager: WindowObserverDelegate {
     private func processEvents(_ events: [WindowEvent]) {
         var needsLayout = Set<CGDirectDisplayID>()
         
+        // Get current on-screen windows for Space filtering
+        let onScreenIds = accessibilityService.getOnScreenWindowIDs()
+        
         for event in events {
             switch event {
             case .windowCreated(let axWin, let app):
                 if let winId = getWindowID(from: axWin) {
+                    // Filter out windows on other Spaces/Desktops
+                    guard onScreenIds.contains(winId) else {
+                        print("Tiling: Skipping window \(winId) (\(app.localizedName ?? "?")) - on different Space")
+                        continue
+                    }
+                    
                     let frame = getFrame(from: axWin)
                     
                     // Filter Logic (fetch title lazily if needed, but app name is available)
@@ -333,6 +417,20 @@ class TilingManager: WindowObserverDelegate {
                 
             case .windowFocused(let axWin, let app):
                 if let winId = getWindowID(from: axWin) {
+                    // Check if on current Space
+                    guard onScreenIds.contains(winId) else {
+                        // Window focused but on different Space - remove from tiling if present
+                        if let existingScreen = windowScreens[winId] {
+                            print("Tiling: Removing window \(winId) - now on different Space")
+                            getEngine(for: existingScreen).removeWindow(winId)
+                            windowScreens.removeValue(forKey: winId)
+                            axCache.removeValue(forKey: winId)
+                            frameCache.removeValue(forKey: winId)
+                            needsLayout.insert(existingScreen)
+                        }
+                        continue
+                    }
+                    
                     // Check if ignored - if so, do nothing? or ensure it's removed?
                     // Ideally, if an ignored window gets focus, we just don't tile it.
                     // But if it WAS tiled and now is ignored (config change?), we should remove it.
@@ -430,14 +528,22 @@ class TilingManager: WindowObserverDelegate {
                 guard let winId = getWindowID(from: axWin),
                       let screenId = windowScreens[winId] else { return }
                 
-                let frame = getFrame(from: axWin)
-                frameCache[winId] = frame
+                let newFrame = getFrame(from: axWin)
+                let oldFrame = frameCache[winId]
+                
+                // Track the window being resized for adaptive layout
+                if activeResizeWindowId == nil {
+                    activeResizeWindowId = winId
+                    resizeStartFrame = oldFrame ?? newFrame
+                    print("📏 Resize started for window \(winId)")
+                }
+                
+                frameCache[winId] = newFrame
                 
                 // Start resize detection if not already active
                 if !isResizingOrDragging {
                     isResizingOrDragging = true
                     resizeDragScreenId = screenId
-                    print("Resize started - pausing layout")
                 }
                 
                 // Debounce - only apply layout after user stops resizing
@@ -483,15 +589,23 @@ class TilingManager: WindowObserverDelegate {
         // LAZY VALIDATION: Prune any windows that are no longer valid
         let engine = getEngine(for: screenId)
         
-        // We need to check if windows still exist.
-        // Fast check: just ensure they are in our cache.
-        // Stricter check (expensive): Ping accessibility API?
-        // Compromise: relying on axCache. If our cache is stale, we might be in trouble,
-        // so maybe we should do a quick validity check on the AXUIElement if possible?
+        // Get current on-screen windows (filters by Space)
+        let onScreenIds = accessibilityService.getOnScreenWindowIDs()
+        
+        // We need to check if windows still exist AND are on current Space.
         // AXUIElementGetPid checks validity.
         
         var validIds = Set<WindowID>()
         for windowId in engine.windowIds {
+            // First check: window must be on current Space
+            guard onScreenIds.contains(windowId) else {
+                print("⏭️ Window \(windowId) not on current Space - removing from layout")
+                windowScreens.removeValue(forKey: windowId)
+                axCache.removeValue(forKey: windowId)
+                frameCache.removeValue(forKey: windowId)
+                continue
+            }
+            
             if let element = axCache[windowId] {
                 var pid: pid_t = 0
                 let err = AXUIElementGetPid(element, &pid)
@@ -545,14 +659,30 @@ class TilingManager: WindowObserverDelegate {
     /// Called when resize debounce timer fires
     private func finishResizeDrag() {
         guard isResizingOrDragging,
-              let screenId = resizeDragScreenId else { return }
-
+              let screenId = resizeDragScreenId else {
+            cleanupResizeState()
+            return
+        }
+        
+        // Check if this was a resize (has activeResizeWindowId) or just a drag
+        if let resizedWindowId = activeResizeWindowId,
+           let newFrame = frameCache[resizedWindowId] {
+            print("📐 Resize completed - adapting layout around window \(resizedWindowId)")
+            applyAdaptedLayout(for: screenId, preservingWindow: resizedWindowId, withFrame: newFrame)
+        } else {
+            // Just a minor move or something - apply standard layout
+            applyLayout(for: screenId)
+        }
+        
+        cleanupResizeState()
+    }
+    
+    /// Clean up all resize/drag tracking state
+    private func cleanupResizeState() {
         isResizingOrDragging = false
         resizeDragScreenId = nil
-
-        print("Resize/Drag completed - adapting layout")
-
-        applyAdaptedLayout(for: screenId)
+        activeResizeWindowId = nil
+        resizeStartFrame = nil
     }
 
     /// Called when drag debounce timer fires - handles window swap
@@ -562,8 +692,7 @@ class TilingManager: WindowObserverDelegate {
         let screen = getScreen(id: screenId ?? CGMainDisplayID())
 
         // Reset state early
-        isResizingOrDragging = false
-        resizeDragScreenId = nil
+        cleanupResizeState()
 
         guard let engine = engine,
               let screen = screen else {
@@ -610,12 +739,33 @@ class TilingManager: WindowObserverDelegate {
     }
 
     /// Apply adapted layout that preserves user's resize while redistributing other windows
-    private func applyAdaptedLayout(for screenId: CGDirectDisplayID) {
+    private func applyAdaptedLayout(for screenId: CGDirectDisplayID, preservingWindow: WindowID, withFrame preservedFrame: CGRect) {
         guard let screen = getScreen(id: screenId),
               let engine = engines[screenId] else { return }
-
-        // For now, use standard layout
-        applyLayout(for: screenId)
+        
+        let screenFrame = screen.visibleFrameForAX
+        let targetFrames = engine.calculateAdaptedFrames(
+            for: screenFrame,
+            preservedWindow: preservingWindow,
+            preservedFrame: preservedFrame
+        )
+        
+        print("📐 Adapted Layout Screen \(screenId): preserving window \(preservingWindow) at \(Int(preservedFrame.width))x\(Int(preservedFrame.height))")
+        
+        for (winId, targetFrame) in targetFrames {
+            guard let axElement = axCache[winId] else { continue }
+            
+            Task {
+                do {
+                    try await AccessibilityService.shared.setWindowFrame(axElement, to: targetFrame)
+                    self.queue.async {
+                        self.frameCache[winId] = targetFrame
+                    }
+                } catch {
+                    print("Failed to tile window \(winId): \(error)")
+                }
+            }
+        }
     }
 
     private func reconcileAll() {
