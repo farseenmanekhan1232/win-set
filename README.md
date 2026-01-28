@@ -11,9 +11,15 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License">
 </p>
 
+
+![ezgif-55690c43c31a1375](https://github.com/user-attachments/assets/8fd5958d-6aaa-41f0-b294-b45331e602b0)
+
+
 ---
 
 ## Features
+
+
 
 - **🪟 Smart Auto-Tiling** - Windows automatically organize into optimal layouts
   - 1 window: Full screen with margins
